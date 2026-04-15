@@ -96,8 +96,8 @@ wireshark-agent/
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/your-username/wireshark-agent.git
-cd wireshark-agent
+git clone https://github.com/Denzel29/Wireshark-Agent.git
+cd Wireshark-Agent
 
 # Backend
 pip install -r requirements.txt
