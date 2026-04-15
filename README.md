@@ -23,7 +23,7 @@ Raw network traffic is mostly noise. This tool filters it, tags what's interesti
 |---|---|
 | Packet capture | tshark (Wireshark CLI) |
 | Agent runtime | Python 3.11+ |
-| AI / LLM | Claude API (`claude-sonnet-4`) |
+| AI / LLM | Gemini API (`gemini-2.5-flash`) |
 | Storage | SQLite |
 | Backend | FastAPI |
 | Real-time | FastAPI WebSockets |
@@ -31,7 +31,7 @@ Raw network traffic is mostly noise. This tool filters it, tags what's interesti
 | Email | smtplib |
 | Frontend | Next.js 14 + TypeScript |
 | Styling | Tailwind CSS |
-| Infrastructure | Docker Compose (optional) |
+
 
 ---
 
@@ -42,7 +42,6 @@ wireshark-agent/
 ├── main.py                         # Entry point
 ├── config.yaml                     # All runtime config
 ├── requirements.txt
-├── docker-compose.yml
 │
 ├── capture/
 │   ├── tshark_stream.py            # Live capture
@@ -50,7 +49,7 @@ wireshark-agent/
 │   └── filter.py                   # Pre-agent noise filter
 │
 ├── agents/
-│   ├── classifier.py               # Classifies each flow via Claude
+│   ├── classifier.py               # Classifies each flow via Gemini
 │   ├── alert_agent.py              # Evaluates thresholds, fires alerts
 │   └── report_agent.py             # Generates report narrative
 │
@@ -92,7 +91,7 @@ wireshark-agent/
 - Python 3.11+
 - Node.js 18+
 - tshark installed (`sudo apt install tshark` on Ubuntu / download Wireshark on macOS or Windows)
-- An Anthropic API key
+- A Gemini API key
 
 ### 1. Clone and install
 
@@ -118,7 +117,7 @@ cp config.example.yaml config.yaml
 Set your secrets as environment variables — never put them directly in `config.yaml`:
 
 ```bash
-export ANTHROPIC_API_KEY=your_key_here
+export GEMINI_API_KEY=your_key_here
 export SMTP_PASSWORD=your_smtp_password  # only needed if using email
 ```
 
@@ -130,7 +129,7 @@ capture:
   whitelist_ips: []      # IPs to always treat as benign
 
 agents:
-  model: claude-sonnet-4
+  model: gemini-2.5-flash
   alert_thresholds:
     suspicious_count: 3  # alert after 3 suspicious flows from same source
     time_window_seconds: 60
@@ -167,12 +166,6 @@ Open `http://localhost:3000`.
 
 The FastAPI backend runs on `http://localhost:8000`. Interactive API docs at `http://localhost:8000/docs`.
 
-### 4. Docker (optional)
-
-```bash
-docker-compose up
-```
-
 ---
 
 ## How the pipeline works
@@ -187,7 +180,7 @@ Network interface / pcap file
    Filter layer          ← drops ARP, broadcasts, whitelisted IPs
         │
         ▼
-   Classifier Agent      ← Claude tags each flow: benign / suspicious / unknown
+   Classifier Agent      ← Gemini tags each flow: benign / suspicious / unknown
         │
         ├──▶  Alert Agent      ← fires on suspicious flows above threshold
         │          │
@@ -200,11 +193,11 @@ Network interface / pcap file
 
 ### The agents
 
-**Classifier** — gets called for every flow that survives the filter. Sends flow metadata to Claude and gets back a classification, a confidence score, and descriptive tags. Output is validated JSON before anything hits the database.
+**Classifier** — gets called for every flow that survives the filter. Sends flow metadata to Gemini and gets back a classification, a confidence score, and descriptive tags. Output is validated JSON before anything hits the database.
 
-**Alert Agent** — only sees suspicious and unknown flows. Counts hits per source IP within a rolling time window. Once a threshold is crossed, calls Claude to generate a structured alert with severity, category, and reasoning. High-severity alerts push a persistent banner in the UI.
+**Alert Agent** — only sees suspicious and unknown flows. Counts hits per source IP within a rolling time window. Once a threshold is crossed, calls Gemini to generate a structured alert with severity, category, and reasoning. High-severity alerts push a persistent banner in the UI.
 
-**Report Agent** — runs on demand or at session end. Pulls all session data from SQLite, asks Claude to write a narrative summary, and hands it to ReportLab for PDF rendering.
+**Report Agent** — runs on demand or at session end. Pulls all session data from SQLite, asks Gemini to write a narrative summary, and hands it to ReportLab for PDF rendering.
 
 ---
 
@@ -266,7 +259,7 @@ See the [system design document](docs/system_design.md) for the full schema.
 | `capture.filter` | `ip` | tshark BPF filter expression |
 | `capture.min_packet_size` | `40` | Drop packets below this size (bytes) |
 | `capture.whitelist_ips` | `[]` | IPs always classified as benign |
-| `agents.model` | `claude-sonnet-4` | Claude model for all agents |
+| `agents.model` | `gemini-2.5-flash` | Gemini model for all agents |
 | `agents.classifier_confidence_threshold` | `0.6` | Minimum confidence to act on |
 | `agents.alert_thresholds.suspicious_count` | `3` | Hits before firing alert |
 | `agents.alert_thresholds.time_window_seconds` | `60` | Rolling window for threshold counts |
@@ -285,7 +278,6 @@ See the [system design document](docs/system_design.md) for the full schema.
 - [ ] Alert correlation across sessions
 - [ ] Custom filter rules and thresholds via web UI
 - [ ] Basic auth for web UI
-- [ ] Full Docker Compose setup
 
 ---
 
@@ -294,7 +286,7 @@ See the [system design document](docs/system_design.md) for the full schema.
 - Python 3.11+
 - Node.js 18+
 - tshark (Wireshark CLI)
-- Anthropic API key
+- Gemini API key
 - SMTP credentials (optional, for email)
 
 ---
