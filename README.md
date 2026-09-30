@@ -1,19 +1,18 @@
 # Wireshark Agent Suite
 
-> AI-powered network traffic analysis. Captures live traffic or reads pcap files, classifies flows, fires alerts, and generates PDF reports — all from a single command.
+> AI-powered network traffic analysis. Captures live traffic via `tshark`, classifies each flow with an LLM, and streams results to a live web dashboard.
 
 ---
 
 ## What it does
 
-Raw network traffic is mostly noise. This tool filters it, tags what's interesting, and tells you why. You get a live web dashboard, real-time alerts, and downloadable PDF reports — without having to babysit Wireshark yourself.
+Raw network traffic is mostly noise. This tool captures it, tags what's interesting, and tells you why.
 
 - Attaches to a network interface and captures live traffic via `tshark` — no GUI, no manual captures
-- Upload historical `.pcap` / `.pcapng` files and run them through the same pipeline
-- AI agents classify each flow as **benign**, **suspicious**, or **unknown**
-- Suspicious flows trigger structured alerts with severity levels and reasoning
-- Session reports generated as PDFs, viewable in-browser or downloadable
-- Email reports on demand to configured recipients
+- A classifier agent tags each flow as **benign**, **suspicious**, or **unknown** using the Gemini API
+- An alert agent watches for repeated suspicious/unknown flows from the same source and fires structured alerts
+- Flows, alerts, and sessions are persisted to SQLite
+- A live web dashboard streams flows in real time over WebSockets
 
 ---
 
@@ -22,64 +21,45 @@ Raw network traffic is mostly noise. This tool filters it, tags what's interesti
 | Layer | Tool |
 |---|---|
 | Packet capture | tshark (Wireshark CLI) |
-| Agent runtime | Python 3.11+ |
-| AI / LLM | Gemini API (`gemini-2.5-flash`) |
+| Backend runtime | Python 3.11+ |
+| AI / LLM | Gemini API (`gemini-2.5-flash-lite`) |
 | Storage | SQLite |
 | Backend | FastAPI |
 | Real-time | FastAPI WebSockets |
-| PDF reports | ReportLab |
-| Email | smtplib |
-| Frontend | Next.js 14 + TypeScript |
+| Frontend | Next.js + TypeScript |
 | Styling | Tailwind CSS |
-
 
 ---
 
 ## Project structure
 
 ```
-wireshark-agent/
-├── main.py                         # Entry point
-├── config.yaml                     # All runtime config
+Wireshark-Agent/
+├── main.py                     # Entry point: starts capture + web server
+├── config.yaml                 # Agent thresholds
 ├── requirements.txt
 │
 ├── capture/
-│   ├── tshark_stream.py            # Live capture
-│   ├── pcap_reader.py              # pcap file import
-│   └── filter.py                   # Pre-agent noise filter
+│   ├── tshark_stream.py        # Live capture (tshark -T ek stream)
+│   └── filter.py               # Pre-agent noise filter
 │
 ├── agents/
-│   ├── classifier.py               # Classifies each flow via Gemini
-│   ├── alert_agent.py              # Evaluates thresholds, fires alerts
-│   └── report_agent.py             # Generates report narrative
+│   ├── classifier.py           # Classifies each flow via Gemini
+│   └── alert_agent.py          # Evaluates thresholds, fires alerts
 │
 ├── storage/
-│   ├── db.py                       # SQLite queries and schema
-│   └── schema.sql
-│
-├── reports/
-│   ├── pdf_builder.py              # ReportLab PDF construction
-│   └── generated/                  # PDF output directory
-│
-├── notifications/
-│   └── email_service.py            # SMTP with PDF attachment
+│   ├── db.py                   # SQLite queries
+│   └── schema.sql              # Table definitions
 │
 ├── server/
-│   ├── app.py                      # FastAPI app
-│   ├── websocket.py                # WebSocket manager
-│   └── routes/                     # sessions, flows, alerts, reports, upload, email
+│   ├── app.py                  # FastAPI app + WebSocket endpoint
+│   └── websocket.py            # WebSocket connection manager
 │
 ├── data/
-│   └── wireshark_agent.db          # Auto-created on first run
+│   └── wireshark_agent.db      # Auto-created on first run
 │
 └── frontend/
-    └── src/
-        ├── app/                    # Next.js routes (live, alerts, sessions, reports, import)
-        ├── components/             # FlowTable, AlertCard, ReportViewer, UploadZone, etc.
-        ├── hooks/                  # useWebSocket, useFlows, useAlerts
-        └── lib/
-            ├── api.ts              # Typed fetch wrappers
-            └── types.ts            # Shared TypeScript interfaces
+    └── src/app/                # Next.js live feed UI
 ```
 
 ---
@@ -90,7 +70,7 @@ wireshark-agent/
 
 - Python 3.11+
 - Node.js 18+
-- tshark installed (`sudo apt install tshark` on Ubuntu / download Wireshark on macOS or Windows)
+- tshark installed (`sudo apt install tshark` on Ubuntu, or install Wireshark on macOS/Windows)
 - A Gemini API key
 
 ### 1. Clone and install
@@ -108,53 +88,32 @@ cd frontend && npm install && cd ..
 
 ### 2. Configure
 
-Copy the example config and fill in your values:
-
-```bash
-cp config.example.yaml config.yaml
-```
-
-Set your secrets as environment variables — never put them directly in `config.yaml`:
+Set your Gemini API key as an environment variable (or place it in a `.env` file at the project root):
 
 ```bash
 export GEMINI_API_KEY=your_key_here
-export SMTP_PASSWORD=your_smtp_password  # only needed if using email
 ```
 
-Key settings in `config.yaml`:
+Agent thresholds live in `config.yaml`:
 
 ```yaml
-capture:
-  interface: eth0        # your network interface
-  whitelist_ips: []      # IPs to always treat as benign
-
 agents:
-  model: gemini-2.5-flash
+  model: gemini-2.5-flash-lite
   alert_thresholds:
-    suspicious_count: 3  # alert after 3 suspicious flows from same source
-    time_window_seconds: 60
-
-smtp:
-  host: smtp.gmail.com
-  port: 587
-  username: you@example.com
-  recipients:
-    - analyst@example.com
+    suspicious_count: 3      # alert after N suspicious flows from same source
+    unknown_count: 5         # alert after N unknown flows from same source
+    time_window_seconds: 60  # rolling window for the counts above
 ```
 
 ### 3. Run
 
-**Live capture** — attach to a network interface:
+**Backend + live capture** — attach to a network interface:
 
 ```bash
 python main.py --interface eth0
 ```
 
-**Web server only** — no capture, just the UI and stored data:
-
-```bash
-python main.py --no-capture
-```
+On Windows, use the interface name or index (e.g. `--interface "Ethernet"` or `--interface 1`).
 
 **Frontend** (separate terminal):
 
@@ -162,132 +121,62 @@ python main.py --no-capture
 cd frontend && npm run dev
 ```
 
-Open `http://localhost:3000`.
-
-The FastAPI backend runs on `http://localhost:8000`. Interactive API docs at `http://localhost:8000/docs`.
+Open `http://localhost:3000` for the live feed. The FastAPI backend runs on `http://localhost:8000`.
 
 ---
 
 ## How the pipeline works
 
 ```
-Network interface / pcap file
+Network interface
         │
         ▼
-   tshark (JSON stream)
+   tshark (NDJSON / EK stream)
         │
         ▼
-   Filter layer          ← drops ARP, broadcasts, whitelisted IPs
+   Filter layer          ← drops non-IP packets and broadcasts
         │
         ▼
    Classifier Agent      ← Gemini tags each flow: benign / suspicious / unknown
         │
-        ├──▶  Alert Agent      ← fires on suspicious flows above threshold
+        ├──▶  Alert Agent      ← fires when suspicious/unknown counts cross thresholds
         │          │
         │          └──▶  WebSocket push to UI + terminal output
         │
-        └──▶  SQLite           ← all flows, alerts, sessions stored
+        └──▶  SQLite           ← flows, alerts, and sessions stored
                   │
-                  └──▶  FastAPI ──▶ Next.js web UI
+                  └──▶  FastAPI ──▶ Next.js live feed
 ```
 
 ### The agents
 
-**Classifier** — gets called for every flow that survives the filter. Sends flow metadata to Gemini and gets back a classification, a confidence score, and descriptive tags. Output is validated JSON before anything hits the database.
+**Classifier** (`agents/classifier.py`) — called for every flow that survives the filter. Sends flow metadata to Gemini and returns a classification, a confidence score, and descriptive tags. Falls back to `unknown` with `0.0` confidence if the API call fails or returns invalid JSON.
 
-**Alert Agent** — only sees suspicious and unknown flows. Counts hits per source IP within a rolling time window. Once a threshold is crossed, calls Gemini to generate a structured alert with severity, category, and reasoning. High-severity alerts push a persistent banner in the UI.
-
-**Report Agent** — runs on demand or at session end. Pulls all session data from SQLite, asks Gemini to write a narrative summary, and hands it to ReportLab for PDF rendering.
-
----
-
-## Web UI
-
-Five views, one navigation bar:
-
-| View | What it shows |
-|---|---|
-| **Live Feed** | Real-time scrolling table of flows. Green = benign, amber = unknown, red = suspicious. Pause to inspect. |
-| **Alert Feed** | Every alert the agent has fired. Severity badges, reasoning, acknowledge + notes. High alerts banner until dismissed. |
-| **Session History** | All past sessions — live and imported. Flow counts, alert breakdown, link to report. |
-| **Report Viewer** | PDF rendered inline. Download button. Email button (sends to configured recipients on request). |
-| **PCAP Import** | Drag-and-drop pcap upload. Progress bar during analysis. Drops into the session view when done. |
-
----
-
-## Alert severity
-
-| Severity | When it fires |
-|---|---|
-| Low | Single suspicious flow, low confidence, or first unknown from a new source |
-| Medium | Repeated suspicious flows from same source, or unknown protocol on a standard port |
-| High | Clear attack signature — port scan, beaconing, exfiltration indicators, high-confidence hit |
-
-High severity alerts stay visible in the UI until you acknowledge them. You can add notes at acknowledgement time.
-
----
-
-## Reports
-
-Reports are generated as PDFs and cover:
-
-- Session overview (interface, duration, total flows)
-- Traffic breakdown by protocol and classification
-- Flagged flows table
-- Alert breakdown by severity
-- Top suspicious actors
-- Timeline of events
-- Analyst recommendations from the agent
-
-Reports are stored in `reports/generated/` and can be viewed inline, downloaded, or emailed from the Report Viewer.
+**Alert Agent** (`agents/alert_agent.py`) — tracks suspicious and unknown flows per source IP within a rolling time window. When a count crosses its threshold, it asks Gemini to generate a structured alert (severity, category, description, reasoning) and falls back to a threshold-based alert if the model doesn't respond.
 
 ---
 
 ## Data model
 
-Four SQLite tables: `sessions`, `flows`, `alerts`, `reports`. Everything links back to a session. The `raw_json` field on each flow stores the original tshark output, so you can replay or audit any capture later.
+Three SQLite tables defined in `storage/schema.sql`:
 
-See the [system design document](docs/system_design.md) for the full schema.
-
----
-
-## Configuration reference
-
-| Key | Default | Description |
-|---|---|---|
-| `capture.interface` | `eth0` | Network interface for live capture |
-| `capture.filter` | `ip` | tshark BPF filter expression |
-| `capture.min_packet_size` | `40` | Drop packets below this size (bytes) |
-| `capture.whitelist_ips` | `[]` | IPs always classified as benign |
-| `agents.model` | `gemini-2.5-flash` | Gemini model for all agents |
-| `agents.classifier_confidence_threshold` | `0.6` | Minimum confidence to act on |
-| `agents.alert_thresholds.suspicious_count` | `3` | Hits before firing alert |
-| `agents.alert_thresholds.time_window_seconds` | `60` | Rolling window for threshold counts |
-| `smtp.host` | — | SMTP server hostname |
-| `smtp.port` | `587` | SMTP port |
-| `smtp.password_env` | `SMTP_PASSWORD` | Env var name for SMTP password |
-| `server.port` | `8000` | FastAPI backend port |
+- **sessions** — one row per capture run, with flow counts and per-severity alert tallies
+- **flows** — every flow that passed the filter, with its classification, confidence, and tags
+- **alerts** — fired alerts, linked back to their session, with severity and reasoning
 
 ---
 
 ## Roadmap
 
-- [ ] Dashboard view — flow trends, protocol breakdown, top talkers
-- [ ] Automatic email on high-severity alert (configurable threshold)
-- [ ] Multi-interface capture
-- [ ] Alert correlation across sessions
-- [ ] Custom filter rules and thresholds via web UI
-- [ ] Basic auth for web UI
+Planned but not yet implemented:
 
----
-
-## Requirements
-
-- Python 3.11+
-- Node.js 18+
-- tshark (Wireshark CLI)
-- Gemini API key
-- SMTP credentials (optional, for email)
+- [ ] PCAP file import (analyze historical `.pcap` / `.pcapng` captures)
+- [ ] Report agent + PDF report generation
+- [ ] Email delivery of reports
+- [ ] REST API routes for sessions, flows, and alerts
+- [ ] Additional UI views (alerts, session history, reports)
+- [ ] IP whitelist and configurable capture filters
+- [ ] Basic auth for the web UI
 
 ---
 

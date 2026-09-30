@@ -1,0 +1,6 @@
+agents:
+  model: gemini-2.5-flash-lite
+  alert_thresholds:
+    suspicious_count: 3
+    unknown_count: 5
+    time_window_seconds: 60
